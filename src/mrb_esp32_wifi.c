@@ -40,7 +40,7 @@ typedef struct eh_ctx_t {
   mrb_value on_disconnected_blk;
 } eh_ctx_t;
 
-static esp_err_t 
+static esp_err_t
 event_handler(void *ctx, system_event_t *event)
 {
   eh_ctx_t *ehc = (eh_ctx_t *)ctx;
@@ -70,7 +70,7 @@ event_handler(void *ctx, system_event_t *event)
       }
       break;
     case SYSTEM_EVENT_STA_DISCONNECTED:
-      // This is a workaround as ESP32 WiFi libs don't currently auto-reassociate. 
+      // This is a workaround as ESP32 WiFi libs don't currently auto-reassociate.
       esp_wifi_connect();
       xEventGroupClearBits(wifi_event_group, CONNECTED_BIT);
       if (ehc != NULL) {
@@ -86,6 +86,24 @@ event_handler(void *ctx, system_event_t *event)
         vTaskResume(ehc->task);
       }
       break;
+    // Triggered when the AP starts
+    /* case SYSTEM_EVENT_AP_START:*/
+    /*   break;*/
+    // Triggered when the AP stops
+    /* case SYSTEM_EVENT_AP_STOP:*/
+    /*   break;*/
+    // Triggered when a client connects to the network
+    case SYSTEM_EVENT_AP_STACONNECTED:
+      break;
+    // Triggered when a client disconnects from the network
+    case SYSTEM_EVENT_AP_STADISCONNECTED:
+      break;
+    // Triggered when a client gets an IP address on the network
+    case SYSTEM_EVENT_AP_STAIPASSIGNED:
+      break;
+    // Triggered when a client inquires about the network
+    /* case SYSTEM_EVENT_AP_PROBEREQRECVED:*/
+    /*   break;*/
     default:
         break;
   }
@@ -101,13 +119,15 @@ mrb_esp32_wifi_init(mrb_state *mrb, mrb_value self) {
   ehc->on_disconnected_blk = mrb_nil_value();
 
   mrb_data_init(self, ehc, &mrb_eh_ctx_t);
-  
-	wifi_event_group = xEventGroupCreate();
 
-	ESP_ERROR_CHECK( esp_event_loop_init(event_handler, (eh_ctx_t *) DATA_PTR(self)) );
+  wifi_event_group = xEventGroupCreate();
+
+  ESP_ERROR_CHECK( esp_event_loop_init(event_handler, (eh_ctx_t *) DATA_PTR(self)) );
 
   return self;
 }
+
+// Station / Client mode
 
 static mrb_value
 mrb_esp32_wifi_connect(mrb_state *mrb, mrb_value self) {
@@ -116,18 +136,18 @@ mrb_esp32_wifi_connect(mrb_state *mrb, mrb_value self) {
 
   mrb_get_args(mrb, "zz", &ssid, &password);
 
-	wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-	ESP_ERROR_CHECK( esp_wifi_init(&cfg) );
-	ESP_ERROR_CHECK( esp_wifi_set_storage(WIFI_STORAGE_RAM) );
+  wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+  ESP_ERROR_CHECK( esp_wifi_init(&cfg) );
+  ESP_ERROR_CHECK( esp_wifi_set_storage(WIFI_STORAGE_RAM) );
 
-	wifi_config_t wifi_config;
+  wifi_config_t wifi_config;
   memset((void *)&wifi_config, 0, sizeof(wifi_config_t));
   snprintf(wifi_config.sta.ssid, sizeof(wifi_config.sta.ssid), "%s", ssid);
   snprintf(wifi_config.sta.password, sizeof(wifi_config.sta.password), "%s", password);
 
-	ESP_ERROR_CHECK( esp_wifi_set_mode(WIFI_MODE_STA) );
-	ESP_ERROR_CHECK( esp_wifi_set_config(WIFI_IF_STA, &wifi_config) );
-	ESP_ERROR_CHECK( esp_wifi_start() );
+  ESP_ERROR_CHECK( esp_wifi_set_mode(WIFI_MODE_STA) );
+  ESP_ERROR_CHECK( esp_wifi_set_config(WIFI_IF_STA, &wifi_config) );
+  ESP_ERROR_CHECK( esp_wifi_start() );
 
   return self;
 }
@@ -135,7 +155,7 @@ mrb_esp32_wifi_connect(mrb_state *mrb, mrb_value self) {
 static mrb_value
 mrb_esp32_wifi_disconnect(mrb_state *mrb, mrb_value self) {
   ESP_ERROR_CHECK( esp_wifi_stop() );
-  
+
   return self;
 }
 
@@ -148,7 +168,7 @@ mrb_esp32_wifi_set_on_connected(mrb_state *mrb, mrb_value self) {
 
   eh_ctx_t *ehc = (eh_ctx_t *) DATA_PTR(self);
   ehc->on_connected_blk = block;
-  
+
   return self;
 }
 
@@ -161,9 +181,39 @@ mrb_esp32_wifi_set_on_disconnected(mrb_state *mrb, mrb_value self) {
 
   eh_ctx_t *ehc = (eh_ctx_t *) DATA_PTR(self);
   ehc->on_disconnected_blk = block;
-  
+
   return self;
 }
+
+// AP mode
+
+static mrb_value
+mrb_esp32_wifi_ap_start(mrb_state *mrb, mrb_value self) {
+  char *ssid = NULL;
+  char *password = NULL;
+  int max_connections_count;
+
+  mrb_get_args(mrb, "zzi", &ssid, &password, &max_connections_count);
+
+  wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+  ESP_ERROR_CHECK( esp_wifi_init(&cfg) );
+  ESP_ERROR_CHECK( esp_wifi_set_storage(WIFI_STORAGE_RAM) );
+
+  wifi_config_t wifi_config;
+  memset((void *)&wifi_config, 0, sizeof(wifi_config_t));
+  snprintf(wifi_config.ap.ssid, sizeof(wifi_config.ap.ssid), "%s", ssid);
+  snprintf(wifi_config.ap.password, sizeof(wifi_config.ap.password), "%s", password);
+  wifi_config.ap.authmode = WIFI_AUTH_OPEN;
+  wifi_config.ap.max_connection = max_connections_count;
+
+  ESP_ERROR_CHECK( esp_wifi_set_mode(WIFI_MODE_AP) );
+  ESP_ERROR_CHECK( esp_wifi_set_config(WIFI_IF_AP, &wifi_config) );
+  ESP_ERROR_CHECK( esp_wifi_start() );
+
+  return self;
+}
+
+// Gem definition
 
 void
 mrb_mruby_esp32_wifi_gem_init(mrb_state* mrb) {
@@ -171,14 +221,19 @@ mrb_mruby_esp32_wifi_gem_init(mrb_state* mrb) {
 
   struct RClass *esp32_module = mrb_define_module(mrb, "ESP32");
   struct RClass *esp32_wifi_class = mrb_define_class_under(mrb, esp32_module, "WiFi", mrb->object_class);
+  struct RClass *esp32_wifi_ap_class = mrb_define_class_under(mrb, esp32_wifi_class, "AccessPoint", mrb->object_class);
+  struct RClass *esp32_wifi_station_class = mrb_define_class_under(mrb, esp32_wifi_class, "AccessPoint", mrb->object_class);
 
-  mrb_define_method(mrb, esp32_wifi_class, "initialize", mrb_esp32_wifi_init, MRB_ARGS_NONE());
+  mrb_define_method(mrb, esp32_wifi_station_class, "initialize", mrb_esp32_wifi_init, MRB_ARGS_NONE());
 
-  mrb_define_method(mrb, esp32_wifi_class, "connect", mrb_esp32_wifi_connect, MRB_ARGS_REQ(2));
-  mrb_define_method(mrb, esp32_wifi_class, "disconnect", mrb_esp32_wifi_disconnect, MRB_ARGS_NONE());
+  mrb_define_method(mrb, esp32_wifi_station_class, "connect", mrb_esp32_wifi_connect, MRB_ARGS_REQ(2));
+  mrb_define_method(mrb, esp32_wifi_station_class, "disconnect", mrb_esp32_wifi_disconnect, MRB_ARGS_NONE());
 
-  mrb_define_method(mrb, esp32_wifi_class, "on_connected", mrb_esp32_wifi_set_on_connected, MRB_ARGS_BLOCK());
-  mrb_define_method(mrb, esp32_wifi_class, "on_disconnected", mrb_esp32_wifi_set_on_disconnected, MRB_ARGS_BLOCK());
+  mrb_define_method(mrb, esp32_wifi_station_class, "on_connected", mrb_esp32_wifi_set_on_connected, MRB_ARGS_BLOCK());
+  mrb_define_method(mrb, esp32_wifi_station_class, "on_disconnected", mrb_esp32_wifi_set_on_disconnected, MRB_ARGS_BLOCK());
+
+  mrb_define_method(mrb, esp32_wifi_ap_class, "start", mrb_esp32_wifi_ap_start, MRB_ARGS_REQ(3));
+  mrb_define_method(mrb, esp32_wifi_ap_class, "stop", mrb_esp32_wifi_disconnect, MRB_ARGS_NONE());
 }
 
 void
