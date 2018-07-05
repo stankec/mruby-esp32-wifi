@@ -195,6 +195,26 @@ event_handler(void *ctx, system_event_t *event)
   return ESP_OK;
 }
 
+// Utils
+
+wifi_auth_mode_t
+mrb_esp32_wifi_auth_int_to_auth_mode(int value) {
+  switch(value) {
+    case 1:
+      return WIFI_AUTH_WEP;
+    case 2:
+      return WIFI_AUTH_WPA_PSK;
+    case 3:
+      return WIFI_AUTH_WPA2_PSK;
+    case 4:
+      return WIFI_AUTH_WPA_WPA2_PSK;
+    case 5:
+      return WIFI_AUTH_WPA2_ENTERPRISE;
+    default:
+      return WIFI_AUTH_OPEN;
+  };
+}
+
 // Station / Client mode
 
 static mrb_value
@@ -293,10 +313,25 @@ mrb_esp32_ap_init(mrb_state *mrb, mrb_value self) {
 static mrb_value
 mrb_esp32_wifi_ap_start(mrb_state *mrb, mrb_value self) {
   char *ssid = NULL;
-  char *password = NULL;
-  int max_connections_count;
+  char *psk = NULL;
+  int auth_mode_val;
+  int max_connections;
+  int channel = 0;
+  bool hidden = false;
 
-  mrb_get_args(mrb, "zzi", &ssid, &password, &max_connections_count);
+  mrb_get_args(
+    mrb,
+    "ziziib",
+    &ssid,
+    &auth_mode_val,
+    &psk,
+    &max_connections,
+    &channel,
+    &hidden
+  );
+
+  wifi_auth_mode_t auth_mode =
+    mrb_esp32_wifi_auth_int_to_auth_mode(auth_mode_val);
 
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
   ESP_ERROR_CHECK( esp_wifi_init(&cfg) );
@@ -304,14 +339,26 @@ mrb_esp32_wifi_ap_start(mrb_state *mrb, mrb_value self) {
 
   wifi_config_t wifi_config;
   memset((void *)&wifi_config, 0, sizeof(wifi_config_t));
+
   snprintf(wifi_config.ap.ssid, sizeof(wifi_config.ap.ssid), "%s", ssid);
-  snprintf(wifi_config.ap.password, sizeof(wifi_config.ap.password), "%s", password);
-  wifi_config.ap.authmode = WIFI_AUTH_OPEN;
-  wifi_config.ap.max_connection = max_connections_count;
+  snprintf(wifi_config.ap.password, sizeof(wifi_config.ap.password), "%s", psk);
+  wifi_config.ap.authmode = auth_mode;
+  wifi_config.ap.max_connection = max_connections;
+  wifi_config.ap.ssid_hidden = hidden;
+  if (channel > 0) {
+    wifi_config.ap.channel = channel;
+  }
 
   ESP_ERROR_CHECK( esp_wifi_set_mode(WIFI_MODE_AP) );
   ESP_ERROR_CHECK( esp_wifi_set_config(WIFI_IF_AP, &wifi_config) );
   ESP_ERROR_CHECK( esp_wifi_start() );
+
+  return self;
+}
+
+static mrb_value
+mrb_esp32_wifi_ap_stop(mrb_state *mrb, mrb_value self) {
+  ESP_ERROR_CHECK( esp_wifi_stop() );
 
   return self;
 }
@@ -379,8 +426,8 @@ mrb_mruby_esp32_wifi_gem_init(mrb_state* mrb) {
   // AccessPoint class
   mrb_define_method(mrb, esp32_wifi_ap_class, "initialize", mrb_esp32_ap_init, MRB_ARGS_NONE());
 
-  mrb_define_method(mrb, esp32_wifi_ap_class, "start", mrb_esp32_wifi_ap_start, MRB_ARGS_REQ(3));
-  mrb_define_method(mrb, esp32_wifi_ap_class, "stop", mrb_esp32_wifi_disconnect, MRB_ARGS_NONE());
+  mrb_define_method(mrb, esp32_wifi_ap_class, "__start", mrb_esp32_wifi_ap_start, MRB_ARGS_REQ(3));
+  mrb_define_method(mrb, esp32_wifi_ap_class, "__stop", mrb_esp32_wifi_ap_stop, MRB_ARGS_NONE());
 
   mrb_define_method(mrb, esp32_wifi_ap_class, "on_station_connected", mrb_esp32_wifi_ap_set_station_connected_handler, MRB_ARGS_BLOCK());
   mrb_define_method(mrb, esp32_wifi_ap_class, "on_station_disconnected", mrb_esp32_wifi_ap_set_station_disconnected_handler, MRB_ARGS_BLOCK());
